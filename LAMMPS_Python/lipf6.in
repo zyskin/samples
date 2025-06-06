@@ -1,0 +1,647 @@
+include "system.in.init"
+read_data "system.data"
+include "system.in.settings"
+
+variable T1 equal 300  # sets the temperature
+
+variable Timer equal step*dt
+
+# ------------------------ Box Relaxation Run ------------------------
+# This is the equilibriation setup
+reset_timestep 0
+timestep 0.05
+#fix 2 all box/relax iso 1.0 vmax 0.003 
+thermo 500
+thermo_style custom step fmax lx ly lz vol press
+min_style cg
+#dump traj all atom 10 traj.dat
+minimize 1e-10 1e-15 20 200
+#unfix 2 
+
+# ------------------------ MD Run ------------------------------------
+reset_timestep 0
+timestep 0.5
+run 0 post no  # trigger neighbor list rebuild
+
+
+region inner_box block -15.932 15.932 -15.932 15.932 -15.932 15.932 side in units box
+region outer_box block -15.932 15.932 -15.932 15.932 -15.932 15.932 side out units box  #rest of the box
+
+group inner_atoms dynamic all region inner_box every 1 #groups atoms in inner region to apply nve every 1 steps
+group outer_atoms dynamic all region outer_box every 1 #groups atoms in outer region to apply thermostat every 1 steps
+
+velocity all create ${T1} 4191565 mom yes rot yes dist gaussian
+
+fix 1 all momentum 1 linear 1 1 1 angular
+
+fix thermo_in inner_atoms nve  #This sets nve
+fix thermo_out outer_atoms npt temp ${T1} ${T1} $(100.0*dt) iso 1.0 1.0 $(500.0*dt)
+#fix thermo_all  all npt temp ${T1} ${T1} 10.0 iso 1.0 1.0 500.0 #This sets npt with temp
+
+restart 1 tmpn1.restart tmpn2.restart
+run 2
+
+group Li  molecule 1:512 
+group Pfs molecule 513:1024 
+group Pc  molecule 1025:6656
+group LiIn dynamic Li region inner_box every 1
+group PfsIn dynamic Pfs  region inner_box every 1
+group PcIn dynamic Pc region inner_box every 1
+
+compute peatom all pe/atom
+compute keatom all ke/atom
+
+compute        p all stress/atom NULL
+variable       prs atom -(c_p[1]+c_p[2]+c_p[3])/3
+
+compute 11 LiIn group/group LiIn pair yes kspace no
+compute 22  PfsIn group/group PfsIn pair yes kspace no
+compute 33  PcIn group/group PcIn pair yes kspace no
+compute 12 LiIn group/group PfsIn pair yes kspace no
+compute 13 LiIn group/group PcIn pair yes kspace no
+compute 23 PfsIn group/group PcIn pair yes kspace no
+
+variable kk equal PI/15.932
+variable qq0 equal 0.0
+variable qq1 equal 0.0
+
+variable  cox1 atom cos(v_kk*x)
+variable  cox2 atom cos(v_kk*y)
+variable  cox3 atom cos(v_kk*z)
+variable  six1 atom sin(v_kk*x)
+variable  six2 atom sin(v_kk*y)
+variable  six3 atom sin(v_kk*z)
+variable  cov1 atom vx*v_cox1
+variable  cov2 atom vy*v_cox2
+variable  cov3 atom vz*v_cox3
+variable  siv1 atom vx*v_six1
+variable  siv2 atom vy*v_six2
+variable  siv3 atom vz*v_six3
+
+compute cc11 LiIn reduce sum v_cox1
+compute cc12 LiIn reduce sum v_cox2
+compute cc13 LiIn reduce sum v_cox3
+compute cs11 LiIn reduce sum v_six1 
+compute cs12 LiIn reduce sum v_six2 
+compute cs13 LiIn reduce sum v_six3
+
+compute vc11 LiIn reduce sum v_cov1 
+compute vc12 LiIn reduce sum v_cov2 
+compute vc13 LiIn reduce sum v_cov3
+compute vs11 LiIn reduce sum v_siv1 
+compute vs12 LiIn reduce sum v_siv2 
+compute vs13 LiIn reduce sum v_siv3
+
+
+variable n1 equal count(LiIn)
+
+python get_cc21 input 1 SELF return v_cc21 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cc21(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][0])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][0]
+   return qq0
+"""
+python get_cc22 input 1 SELF return v_cc22 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cc22(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][1])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][1]
+   return qq0
+"""
+python get_cc23 input 1 SELF return v_cc23 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cc23(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][2])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][2]
+   return qq0
+"""
+python get_cs21 input 1 SELF return v_cs21 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cs21(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][0])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][0]
+   return qq0
+"""
+python get_cs22 input 1 SELF return v_cs22 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cs22(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][1])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][1]
+   return qq0
+"""
+python get_cs23 input 1 SELF return v_cs23 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cs23(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][2])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][2]
+   return qq0
+"""
+python get_vc21 input 1 SELF return v_vc21 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vc21(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][0])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][0]
+   return qq1
+"""
+python get_vc22 input 1 SELF return v_vc22 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vc22(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][1])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][1]
+   return qq1
+"""
+python get_vc23 input 1 SELF return v_vc23 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vc23(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][2])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][2]
+   return qq1
+"""
+python get_vs21 input 1 SELF return v_vs21 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vs21(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][0])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][0]
+   return qq1
+"""
+python get_vs22 input 1 SELF return v_vs22 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vs22(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][1])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][1]
+   return qq1
+"""
+python get_vs23 input 1 SELF return v_vs23 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vs23(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PfsM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pfscom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pfsvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][2])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][2]
+   return qq1
+"""
+python get_cc31 input 1 SELF return v_cc31 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cc31(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][0])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][0]
+   return qq0
+"""
+python get_cc32 input 1 SELF return v_cc32 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cc32(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][1])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][1]
+   return qq0
+"""
+python get_cc33 input 1 SELF return v_cc33 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cc33(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][2])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][2]
+   return qq0
+"""
+python get_cs31 input 1 SELF return v_cs31 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cs31(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][0])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][0]
+   return qq0
+"""
+python get_cs32 input 1 SELF return v_cs32 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cs32(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][1])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][1]
+   return qq0
+"""
+python get_cs33 input 1 SELF return v_cs33 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_cs33(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   qq0 = 0.0
+   #qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][2])
+     qq0 = qq0+co
+     #qq1 = qq1+co*molvcm2[i][2]
+   return qq0
+"""
+python get_vc31 input 1 SELF return v_vc31 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vc31(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][0])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][0]
+   return qq1
+"""
+python get_vc32 input 1 SELF return v_vc32 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vc32(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][1])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][1]
+   return qq1
+"""
+python get_vc33 input 1 SELF return v_vc33 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vc33(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.cos(kk*molcom2[i][2])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][2]
+   return qq1
+"""
+python get_vs31 input 1 SELF return v_vs31 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vs31(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][0])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][0]
+   return qq1
+"""
+python get_vs32 input 1 SELF return v_vs32 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vs32(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][1])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][1]
+   return qq1
+"""
+python get_vs33 input 1 SELF return v_vs33 format pf here """
+from lammps import lammps, LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR, LMP_TYPE_ARRAY, LMP_TYPE_VECTOR
+import math
+def get_vs33(lmpptr):
+   lmp = lammps(ptr=lmpptr)
+   kk=lmp.extract_variable('kk')
+   numchunk2 = lmp.extract_compute('PcM', LMP_STYLE_GLOBAL, LMP_TYPE_SCALAR)
+   molcom2 = lmp.extract_compute('Pccom', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   molvcm2 = lmp.extract_compute('Pcvcm', LMP_STYLE_GLOBAL, LMP_TYPE_ARRAY)
+   co = 0.0
+   #qq0 = 0.0
+   qq1 = 0.0
+   for i in range(0,int(numchunk2)):
+     co = math.sin(kk*molcom2[i][2])
+     #qq0 = qq0+co
+     qq1 = qq1+co*molvcm2[i][2]
+   return qq1
+"""
+
+#compute LiM LiIn  chunk/atom molecule nchunk every ids every compress yes
+compute PfsM PfsIn  chunk/atom molecule nchunk every ids every compress yes
+compute PcM PcIn  chunk/atom molecule nchunk every ids every compress yes
+compute Pfscom PfsIn com/chunk PfsM
+compute Pccom PcIn com/chunk PcM
+compute Pfsvcm PfsIn vcm/chunk PfsM
+compute Pcvcm PcIn vcm/chunk PcM
+
+# define python style variable to get access to the return value of the python function
+variable cc21 python get_cc21
+variable cc22 python get_cc22
+variable cc23 python get_cc23
+variable cs21 python get_cs21
+variable cs22 python get_cs22
+variable cs23 python get_cs23
+variable vc21 python get_vc21
+variable vc22 python get_vc22
+variable vc23 python get_vc23
+variable vs21 python get_vs21
+variable vs22 python get_vs22
+variable vs23 python get_vs23
+
+variable cc31 python get_cc31
+variable cc32 python get_cc32
+variable cc33 python get_cc33
+variable cs31 python get_cs31
+variable cs32 python get_cs32
+variable cs33 python get_cs33
+variable vc31 python get_vc31
+variable vc32 python get_vc32
+variable vc33 python get_vc33
+variable vs31 python get_vs31
+variable vs32 python get_vs32
+variable vs33 python get_vs33
+
+# declare interface to python function: we have one input (the pointer to the LAMMPS class ->SELF) and one return value thus "format" must describe to types.
+
+
+
+
+variable  cop1 atom v_prs*v_cox1
+variable  cop2 atom v_prs*v_cox2
+variable  cop3 atom v_prs*v_cox3
+variable  sip1 atom v_prs*v_six1
+variable  sip2 atom v_prs*v_six2
+variable  sip3 atom v_prs*v_six3
+
+compute pc11 LiIn  reduce sum v_cop1
+compute pc12 LiIn  reduce sum v_cop2
+compute pc13 LiIn  reduce sum v_cop3
+compute pc21 PfsIn  reduce sum v_cop1
+compute pc22 PfsIn  reduce sum v_cop2
+compute pc23 PfsIn  reduce sum v_cop3
+compute pc31 PcIn  reduce sum v_cop1
+compute pc32 PcIn  reduce sum v_cop2
+compute pc33 PcIn  reduce sum v_cop3 
+
+compute ps11 LiIn  reduce sum v_sip1 
+compute ps12 LiIn  reduce sum v_sip2 
+compute ps13 LiIn  reduce sum v_sip3 
+compute ps21 PfsIn  reduce sum v_sip1 
+compute ps22 PfsIn  reduce sum v_sip2 
+compute ps23 PfsIn  reduce sum v_sip3
+compute ps31 PcIn  reduce sum v_sip1 
+compute ps32 PcIn  reduce sum v_sip2 
+compute ps33 PcIn  reduce sum v_sip3
+
+variable  coke1 atom c_keatom*v_cox1
+variable  coke2 atom c_keatom*v_cox2
+variable  coke3 atom c_keatom*v_cox3
+variable  sike1 atom c_keatom*v_six1
+variable  sike2 atom c_keatom*v_six2
+variable  sike3 atom c_keatom*v_six3
+
+compute kec11 LiIn  reduce sum v_coke1
+compute kec12 LiIn  reduce sum v_coke2
+compute kec13 LiIn  reduce sum v_coke3
+compute kec21 PfsIn  reduce sum v_coke1
+compute kec22 PfsIn  reduce sum v_coke2
+compute kec23 PfsIn  reduce sum v_coke3
+compute kec31 PcIn  reduce sum v_coke1
+compute kec32 PcIn  reduce sum v_coke2
+compute kec33 PcIn  reduce sum v_coke3 
+
+compute kes11 LiIn  reduce sum v_sike1 
+compute kes12 LiIn  reduce sum v_sike2 
+compute kes13 LiIn  reduce sum v_sike3 
+compute kes21 PfsIn  reduce sum v_sike1 
+compute kes22 PfsIn  reduce sum v_sike2 
+compute kes23 PfsIn  reduce sum v_sike3
+compute kes31 PcIn  reduce sum v_sike1 
+compute kes32 PcIn  reduce sum v_sike2 
+compute kes33 PcIn  reduce sum v_sike3
+
+#fix thermo_all  all nvt temp ${T1} ${T1} 1.0 #This sets nvt with temp
+thermo_style custom step  v_n1 c_PfsM  c_PcM c_cc11 c_cc12 c_cc13 v_cc21 v_cc22 v_cc23 v_cc31 v_cc32 v_cc33 c_cs11 c_cs12 c_cs13 v_cs21 v_cs22 v_cs23 v_cs31 v_cs32 v_cs33 c_vc11 c_vc12 c_vc13 v_vc21 v_vc22 v_vc23 v_vc31 v_vc32 v_vc33 c_vs11 c_vs12 c_vs13 v_vs21 v_vs22 v_vs23 v_vs31 v_vs32 v_vs33 c_pc11 c_pc12 c_pc13 c_pc21 c_pc22 c_pc23 c_pc31 c_pc32 c_pc33 c_ps11 c_ps12 c_ps13 c_ps21 c_ps22 c_ps23 c_ps31 c_ps32 c_ps33 c_kec11 c_kec12 c_kec13 c_kec21 c_kec22 c_kec23 c_kec31 c_kec32 c_kec33 c_kes11 c_kes12 c_kes13 c_kes21 c_kes22 c_kes23 c_kes31 c_kes32 c_kes33 c_12[*] c_13[*] c_23[*] c_11 c_22 c_33 c_12 c_13 c_23 lx press pe ke evdwl ecoul epair ebond eangle edihed eimp 
+thermo 1 #outputs thermodynamics every N steps (in this case every step)
+#thermo 1 #outputs thermodynamics every N steps (in this case every step)
+#dump coorvel  all custom 5 lipf6.dat x y z vx vy vz type id mol
+dump coorvel  inner_atoms custom 1000 lipf6.dat x y z vx vy vz type id mol fx fy fz c_peatom v_prs
+#dump forces all custom 1000 forces.dat fx fy fz type id
+#dump velocities all custom 500 velocities.dat vx vy vz type id
+
+
+
+#restart 1000 tmpn1.restart tmpn2.restart
+restart 1000 tmpn1.restart tmpn2.restart
+
+#run  100000
+#run 15000000
+
+run  5000000
+#run  4
+
+#unfix thermo_all
+unfix thermo_out
+unfix thermo_in
